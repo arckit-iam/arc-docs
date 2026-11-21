@@ -40,6 +40,7 @@ Scripts et fichiers d'exemple référencés par la documentation de collecte AD 
 | `arc-consolidator` | Normalise les événements `iam.raw.*` vers les topics `arc.sync.*` |
 | `arc-publisher` | Planifie et publie les événements de provisioning (`arc.provisioning`) |
 | `arc-agent-ad` | Agent d'exécution du provisioning Active Directory |
+| `profile` | Service métier de gestion des profils et permissions ; appelle `arc-publisher` pour créer ou supprimer les groupes AD |
 | `arc-kubeorchestrator` | Charts Helm, ressources Flux et documentation de déploiement |
 
 ## Licence
