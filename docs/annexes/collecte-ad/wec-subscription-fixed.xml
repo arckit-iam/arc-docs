@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Subscription xmlns="http://schemas.microsoft.com/2006/03/windows/events/subscription">
+
+  <SubscriptionId>IAM-Collector</SubscriptionId>
+  <SubscriptionType>CollectorInitiated</SubscriptionType>
+  <Description>IAM Logs</Description>
+  <Enabled>true</Enabled>
+
+  <Uri>http://schemas.microsoft.com/wbem/wsman/1/windows/EventLog</Uri>
+
+  <ConfigurationMode>Custom</ConfigurationMode>
+
+  <Delivery Mode="Push">
+    <Batching>
+      <MaxItems>10</MaxItems>
+      <MaxLatencyTime>5000</MaxLatencyTime>
+    </Batching>
+  </Delivery>
+
+  <Query><![CDATA[
+    <QueryList>
+      <Query Id="0" Path="Security">
+        <Select Path="Security">*[System[
+            EventID=4720 or EventID=4722 or EventID=4725 or EventID=4726 or
+            EventID=4727 or EventID=4728 or EventID=4729 or EventID=4730 or
+            EventID=4731 or EventID=4732 or EventID=4733 or EventID=4734 or
+            EventID=4738 or EventID=4754 or EventID=4756 or EventID=4757 or
+            EventID=4758 or EventID=4781
+        ]]</Select>
+      </Query>
+    </QueryList>
+  ]]></Query>
+
+  <EventSources>
+    <EventSource Enabled="true">
+      <Address>DC01.iap.local</Address>
+    </EventSource>
+  </EventSources>
+
+  <ReadExistingEvents>false</ReadExistingEvents>
+  <ContentFormat>Events</ContentFormat>
+  <Locale>fr-FR</Locale>
+  <LogFile>ForwardedEvents</LogFile>
+
+</Subscription>

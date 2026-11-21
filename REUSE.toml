@@ -1,0 +1,17 @@
+version = 1
+SPDX-PackageName = "arc-docs"
+SPDX-PackageSupplier = "Dédale Solutions"
+
+# Documentation : CC-BY-4.0
+[[annotations]]
+path = "**"
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Dédale Solutions"
+SPDX-License-Identifier = "CC-BY-4.0"
+
+# Scripts et fichiers de configuration d'exemple : EUPL-1.2 (même licence que le code des composants)
+[[annotations]]
+path = "docs/annexes/**"
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Dédale Solutions"
+SPDX-License-Identifier = "EUPL-1.2"

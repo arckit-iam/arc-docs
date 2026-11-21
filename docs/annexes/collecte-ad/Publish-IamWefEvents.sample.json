@@ -1,0 +1,20 @@
+{
+  "source": {
+    "sourceId": "ad://iap.local",
+    "sourceType": "active_directory",
+    "channel": "ForwardedEvents",
+    "eventIds": [4720, 4722, 4725, 4726, 4727, 4728, 4729, 4730, 4731, 4732, 4733, 4734, 4738, 4754, 4756, 4757, 4758, 4781]
+  },
+  "kafka": {
+    "rpkPath": "C:/Tools/rpk/rpk.exe",
+    "topic": "iam.raw.activedirectory",
+    "rpkConfigOptions": [
+      "brokers=192.168.10.15:9092"
+    ]
+  },
+  "runtime": {
+    "statePath": "C:/iap/state/wef-collector-state.json",
+    "pollIntervalSeconds": 2,
+    "maxEventsPerPoll": 200
+  }
+}
