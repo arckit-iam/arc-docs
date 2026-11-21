@@ -23,7 +23,7 @@ Ce dépôt regroupe la documentation transverse. La documentation propre à un c
 
 ### Déploiement et CI/CD
 
-Le déploiement GitOps (Helm, FluxCD) est géré dans un dépôt privé. L'intégration et la mise en production de la plateforme sont proposées par Dédale Solutions en **service payant** : pour en discuter, contactez-nous via le profil GitHub de l'organisation [arckit-iam](https://github.com/arckit-iam). Les guides d'installation et de CI/CD de l'agent collecteur sont dans `agent/docs/` du dépôt principal.
+Le déploiement GitOps (Helm, FluxCD) est géré dans un dépôt privé. L'intégration et la mise en production de la plateforme sont proposées par Dédale Solutions en **service payant** : pour en discuter, contactez-nous à [etiennsalle@gmail.com](mailto:etiennsalle@gmail.com). Les guides d'installation et de CI/CD de l'agent collecteur sont dans `agent/docs/` du dépôt principal.
 
 ### Documentation des composants
 
