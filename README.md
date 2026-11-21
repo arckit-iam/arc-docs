@@ -23,7 +23,7 @@ Ce dépôt regroupe la documentation transverse. La documentation propre à un c
 
 ### Déploiement et CI/CD
 
-Les guides de déploiement et de CI/CD sont dans le dépôt `arc-kubeorchestrator`, à côté des charts Helm et des ressources Flux : `docs/DEPLOY.md` et `docs/CI-CD.md`.
+Le déploiement GitOps (Flux, Helm) est documenté dans le dépôt [`arc-kubeorchestrator`](https://github.com/arckit-iam/arc-kubeorchestrator) (`docs/GITOPS.md`). Les guides d'installation et de CI/CD de l'agent collecteur sont dans `agent/docs/` du dépôt principal.
 
 ### Documentation des composants
 
