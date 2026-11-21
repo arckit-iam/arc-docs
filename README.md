@@ -23,7 +23,7 @@ Ce dépôt regroupe la documentation transverse. La documentation propre à un c
 
 ### Déploiement et CI/CD
 
-Le déploiement GitOps (Flux, Helm) est documenté dans le dépôt [`arc-kubeorchestrator`](https://github.com/arckit-iam/arc-kubeorchestrator) (`docs/GITOPS.md`). Les guides d'installation et de CI/CD de l'agent collecteur sont dans `agent/docs/` du dépôt principal.
+Le déploiement GitOps (Helm, FluxCD) est géré dans un dépôt privé. L'intégration et la mise en production de la plateforme sont proposées par Dédale Solutions en **service payant** : pour en discuter, contactez-nous via le profil GitHub de l'organisation [arckit-iam](https://github.com/arckit-iam). Les guides d'installation et de CI/CD de l'agent collecteur sont dans `agent/docs/` du dépôt principal.
 
 ### Documentation des composants
 
@@ -41,7 +41,7 @@ Scripts et fichiers d'exemple référencés par la documentation de collecte AD 
 | `arc-publisher` | Planifie et publie les événements de provisioning (`arc.provisioning`) |
 | `arc-agent-ad` | Agent d'exécution du provisioning Active Directory |
 | `profile` | Service métier de gestion des profils et permissions ; appelle `arc-publisher` pour créer ou supprimer les groupes AD |
-| `arc-kubeorchestrator` | Charts Helm, ressources Flux et documentation de déploiement |
+| Dépôt GitOps de déploiement (privé) | Charts Helm et ressources Flux ; intégration proposée en service payant |
 
 ## Licence
 
