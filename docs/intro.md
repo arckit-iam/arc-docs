@@ -19,16 +19,15 @@ Deux familles de consommateurs sont adressées :
 |---|---|
 | `docs/00-modele-abstrait.md` | **Fondations** : modèle générique Identity / Entitlement / Assignment |
 | `docs/01-contexte-objectifs.md` | Contexte métier, parties prenantes, périmètre |
+| `docs/01-iam-platform-functional-spec.md` | SpÃ©cification fonctionnelle de la plateforme |
 | `docs/02-architecture-globale.md` | Vue d'ensemble, schéma de flux, composants |
 | `docs/03-collecte-ad.md` | Mécanismes de collecte des logs AD (WEF, Winlogbeat, DirSync) |
 | `docs/04-traitement-detection.md` | Pipeline de traitement, normalisation, détection des événements métier |
 | `docs/05-publication-messaging.md` | Choix du broker, topologie des topics `iam.*`, schémas CloudEvents |
 | `docs/06-soc-securite.md` | Cas d'usage SOC, règles de détection, intégration SIEM |
-| `docs/07-synchronisation.md` | Synchronisation événementielle, pattern Outbox, idempotence, replay |
-| `docs/08-choix-techno.md` | Comparatif technologique (Kafka vs Event Hub vs RabbitMQ…) |
-| `docs/09-securite-architecture.md` | Hardening, secrets, RBAC, chiffrement, audit de la plateforme |
-| `docs/10-roadmap.md` | Extensions futures : Entra ID, MFA events, UEBA |
 | `docs/11-adapter-sources.md` | **Extensibilité** : AD Adapter, App Adapter (webhook/CDC/polling), LDAP Adapter |
+
+> Documents prÃ©vus, pas encore rÃ©digÃ©s : synchronisation Ã©vÃ©nementielle (pattern Outbox, idempotence, replay), comparatif technologique du broker, sÃ©curitÃ© de l'architecture, roadmap (Entra ID, MFA, UEBA).
 
 ---
 
