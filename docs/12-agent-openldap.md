@@ -1,6 +1,6 @@
 # 12 — Agent OpenLDAP, collecte LDAP temps réel et annuaire Apache DS
 
-> **Statut : conception.** Ce document décrit des composants **non encore implémentés** (`arc-agent-openldap`, topic `iam.raw.ldap`, service Apache DS de démonstration). Il sert de référence avant le développement. Les points à valider par un essai sont listés en section 9.
+> **Statut : implémenté et validé sur Apache DS** (étapes 1 à 3 du plan, section 8) : module d'exécution, collecte temps réel par Persistent Search, `LdapEventMapper` du consolidator, service Apache DS de la démonstration. **Reste à faire** : source `accesslog` / Syncrepl pour OpenLDAP (étape 4, à valider sur un vrai OpenLDAP) et `arc-auth` (étape 5). Les points ouverts sont en section 9.
 
 ## 1. Objectifs et périmètre
 
@@ -118,26 +118,28 @@ Les mots de passe sont fournis par secret (jamais par image ni par dépôt).
 
 ### 4.3 Choix retenu
 
-- **OpenLDAP en production** : `accesslog` (valeurs avant/après, auteur de la modification) lu en `refreshAndPersist`.
-- **Apache DS** (démo, tests) et tout serveur sans `accesslog` : Persistent Search ou Syncrepl selon ce que le serveur prend en charge, avec un **cache local d'entrées** pour reconstituer les anciennes valeurs (différence entre l'état précédent et l'état reçu). Le cache est reconstruit au démarrage par une recherche complète.
-- La stratégie est choisie par configuration (`ARC_AGENT_LDAP_CHANGE_SOURCE=accesslog|syncrepl|persistent-search`).
+- **Apache DS** (démo, tests), seule source implémentée et validée : **Persistent Search**, avec un **cache local d'entrées** pour reconstituer les anciennes valeurs (différence entre l'état précédent et l'état reçu). Essai réalisé : Apache DS **refuse Syncrepl** (`Replication is not allowed on this server`) ; Persistent Search fournit en revanche `entryUUID`, `createTimestamp` / `modifyTimestamp` et l'auteur (`creatorsName`, `modifiersName`).
+- **OpenLDAP en production** (étape 4, non implémentée) : `accesslog` (valeurs avant/après, auteur de la modification) lu en `refreshAndPersist`, ou Syncrepl. À valider sur un vrai OpenLDAP.
+- Le choix de la source par configuration (`ARC_AGENT_LDAP_CHANGE_SOURCE`) est prévu avec l'étape 4 ; une seule source existe aujourd'hui.
+- La collecte se déroule **dans l'agent**, activée par `ARC_AGENT_COLLECTION_ENABLED=true` (désactivée par défaut). Elle est événementielle : aucun polling, aucune relecture complète de l'annuaire pour publier (voir 4.8).
 
 ### 4.4 Structure hexagonale
 
 ```
 domain/
-  model/      LdapChange (type, dn, entryUUID, changes, entry, auteur, horodatage)
-  port/       LdapChangeSourcePort     (flux de changements, reprise par curseur)
-              RawEventPublisherPort    (publication d'un événement brut)
-              CursorStorePort          (persistance du cookie / dernier reqStart)
+  model/      LdapChange, LdapEntry, LdapNotification, AttributeChange, LdapChangeType
+  port/       LdapChangeSourcePort     (open : flux de notifications ; modifiedSince : rattrapage ; snapshot)
+              RawEventPublisherPort    (publication d'un changement)
+              CursorStorePort          (persistance du curseur de reprise)
+              OwnWriteRegistryPort     (mémoire des écritures de l'agent, anti-écho)
 infrastructure/
-  ldap/       PersistentSearchChangeSource, SyncreplChangeSource, AccessLogChangeSource
+  ldap/       PersistentSearchChangeSource, InMemoryOwnWriteRegistry, LdapProvisioningHandler
   kafka/      KafkaRawEventPublisher, KafkaCursorStore
 application/
-  service/    LdapCollectionService    (orchestration : source → enrichissement → publication)
+  LdapCollectionService    (orchestration : flux → différence avec le cache → publication → curseur)
 ```
 
-Le domaine ne dépend d'aucune bibliothèque LDAP ni de Kafka. Le client LDAP utilisé dans les adaptateurs est à choisir parmi l'API Apache Directory LDAP (Apache-2.0) et UnboundID LDAP SDK (qui prend en charge Persistent Search et Content Sync) ; la compatibilité de licence avec EUPL-1.2 doit être vérifiée avant l'adoption (section 9).
+Le domaine ne dépend d'aucune bibliothèque LDAP ni de Kafka. Le client LDAP est l'**API Apache Directory LDAP 2.1.5** (Apache-2.0, compatible avec EUPL-1.2). UnboundID LDAP SDK a été écarté pour des raisons de licence.
 
 ### 4.5 Contrat du topic `iam.raw.ldap`
 
@@ -150,7 +152,6 @@ Clé Kafka : `entryUUID` (garantit l'ordre des changements d'une même entrée d
   "system": "ldap://LDAP01",
   "changeType": "modify",
   "dn": "uid=jdoe,ou=Users,dc=example,dc=com",
-  "previousDn": null,
   "entryUUID": "9f1c2e7a-…",
   "objectClasses": ["top", "person", "organizationalPerson", "inetOrgPerson"],
   "timestamp": "2026-05-02T10:15:00.123Z",
@@ -163,14 +164,17 @@ Clé Kafka : `entryUUID` (garantit l'ordre des changements d'une même entrée d
 }
 ```
 
+- Les champs sans valeur sont omis (`previousDn` hors `modrdn`, `modifiedBy` et `entry` pour `delete`).
 - `changeType` : `add`, `modify`, `delete`, `modrdn`.
-- `changes[].old` n'est renseigné que si la source le permet (`accesslog`, cache) ; sinon il est absent.
-- `entry` : état de l'entrée après le changement (absent pour `delete` ; l'ancien état est alors dans `changes` / cache).
-- `origin` : `arc-agent` si `modifiedBy` est le compte de service de l'agent, `external` sinon (voir 4.7).
+- `changes[].op` : `add`, `replace` ou `delete` ; `old` et `new` sont des listes de valeurs. Les anciennes valeurs viennent du cache local de l'agent.
+- `entry` : état de l'entrée après le changement, sans attribut opérationnel ni mot de passe (`userPassword`, `unicodePwd`). Absent pour `delete` : les derniers attributs connus sont alors dans `changes` (`op=delete`).
+- `timestamp` : `modifyTimestamp` de l'annuaire (précision d'une seconde) ; pour un `delete`, heure de publication par l'agent.
+- `modifiedBy` : auteur lisible rapporté par l'annuaire, **à titre informatif** (voir 4.7 : il n'est pas fiable pour distinguer l'origine).
+- `origin` : `arc-agent` (écriture de l'agent), `external` (autre écriture), `catch-up` (rattrapage au redémarrage ou après une coupure), `reconcile` (suppression constatée après une coupure).
 
 ### 4.6 Correspondance vers le modèle ARC (consolidator)
 
-Un mapper `LdapEventMapper` est ajouté à `arc-consolidator` (aujourd'hui seul le mapper Active Directory est opérationnel ; le mapper ISDS est un squelette). Le topic est configuré par `IAM_TOPICS_LDAP` (défaut `iam.raw.ldap`).
+Le mapper `LdapEventMapper` d'`arc-consolidator` (service `LdapConsolidatorService`, consommateur `RawLdapEventConsumer`) est implémenté. Le topic est configuré par `IAM_TOPICS_LDAP` (défaut `iam.raw.ldap`).
 
 | Événement brut | Topic de sortie | `eventType` ARC | Champs |
 |---|---|---|---|
@@ -182,15 +186,22 @@ Un mapper `LdapEventMapper` est ajouté à `arc-consolidator` (aujourd'hui seul 
 | `modify` de `member` (valeur ajoutée) | `arc.sync.assignment` | `ADDED` | `identity` (membre), `entitlement` (groupe) |
 | `modify` de `member` (valeur retirée) | `arc.sync.assignment` | `REMOVED` | idem |
 
-Un seul `modify` portant plusieurs changements de `member` produit un événement d'assignation par valeur. Le membre technique d'un groupe (3.2) est ignoré.
+Un seul `modify` portant plusieurs changements de `member` produit un événement d'assignation par valeur ; un groupe créé avec des membres produit une assignation `ADDED` par membre. Un `modify` qui ne touche que `member` ne produit pas d'événement de droit. Les autres classes d'objets sont ignorées.
 
-Le `system` est repris tel quel (`ldap://LDAP01`) pour que `product-manager` et `arc-publisher` adressent l'agent de provisioning correspondant.
+Le membre technique d'un groupe (3.2) est ignoré : `IAM_LDAP_IGNORED_MEMBERS` liste ses DN, **séparés par des points-virgules** (une virgule fait partie d'un DN). Dans la démonstration : `uid=admin,ou=system`.
+
+Le `system` est repris tel quel (`ldap://LDAP01`) pour que `product-manager` et `arc-publisher` adressent l'agent de provisioning correspondant. `origin` est propagé dans les événements `arc.sync.*` (nouveau champ optionnel des DTO).
+
+Le consolidator écarte un message déjà traité, repéré par son `id` (10 000 identifiants récents en mémoire) : l'agent peut republier un changement au redémarrage (4.8). Cette mémoire est celle du processus ; après un redémarrage du consolidator, un doublon peut repasser.
+
+Limites : un groupe supprimé produit l'événement de droit `DELETED` mais pas d'assignations `REMOVED` ; l'`externalId` de l'identité d'une assignation est vide (le message brut ne donne que le DN du membre).
 
 ### 4.7 Boucle d'écho
 
 Une écriture faite par l'agent de provisioning est elle-même observée par le module de collecte. Pour la distinguer :
 
-- le compte de service de l'agent est connu (`ARC_AGENT_LDAP_BIND_DN`) ; l'attribut opérationnel `modifiersName` (Apache DS, OpenLDAP) ou `reqAuthzID` (`accesslog`) identifie l'auteur ;
+- **Comparer l'auteur au compte de service ne suffit pas**, constaté sur Apache DS : une notification d'ajout n'a pas de `modifiersName` (seulement `creatorsName`), l'auteur arrive sous forme normalisée (OID et espaces, rendu lisible par le schéma), et pour une suppression l'auteur rapporté est le précédent auteur de l'entrée, pas celui qui supprime ;
+- l'agent tient donc une **mémoire en RAM de ses propres écritures** (`OwnWriteRegistryPort`) : le module d'exécution enregistre le couple (DN, type de changement) avant chaque écriture ; le module de collecte le consomme une seule fois à la notification correspondante et marque alors l'événement `origin=arc-agent`. Durée de vie d'une entrée : `ARC_AGENT_COLLECTION_OWN_WRITE_TTL` (30 s). Limites : la mémoire est locale à un processus d'agent, et une écriture externe sur le même DN et le même type dans cette fenêtre serait marquée à tort `arc-agent` ;
 - l'événement est publié avec `origin=arc-agent` et non supprimé : il reste utile à l'audit et à la confirmation d'exécution d'un job ;
 - tout consommateur qui déclencherait un provisioning à partir de `arc.sync.*` doit ignorer les événements `origin=arc-agent` pour éviter une boucle. Le consolidator propage `origin` dans les événements `arc.sync.*`.
 
@@ -198,12 +209,39 @@ Une écriture faite par l'agent de provisioning est elle-même observée par le 
 
 | Sujet | Règle |
 |---|---|
-| **Livraison** | Au moins une fois ; la clé d'idempotence est `id` (système + `entryUUID` + horodatage/CSN). |
-| **Reprise** | Le cookie Syncrepl (ou le dernier `reqStart` d'`accesslog`) est enregistré après publication Kafka acquittée, dans un topic Kafka compacté `iam.raw.ldap.cursor` (clé = `TARGET_SYSTEM`). |
-| **Démarrage initial** | Pas de cookie : synchronisation complète (`refresh`), publiée avec `changeType=add` et `origin=initial-sync` ; le consolidator les traite comme un état et non comme des créations métier. |
-| **Coupure de l'annuaire** | Reconnexion avec backoff exponentiel ; reprise depuis le curseur. Sans curseur valide (Persistent Search), nouvelle synchronisation complète puis comparaison avec le cache. |
+| **Livraison** | Au moins une fois ; l'identifiant d'un message est `<système>_<entryUUID>_<horodatage>` et sert de clé d'idempotence au consolidator. La clé Kafka est `entryUUID`. L'envoi est synchrone (acquittement attendu, 10 s). |
+| **Curseur** | Dernier `modifyTimestamp` publié, enregistré après publication Kafka acquittée dans le topic compacté `iam.raw.ldap.cursor` (clé = `TARGET_SYSTEM`, valeur = instant ISO). Si la publication échoue, le curseur n'avance pas et le changement est rejoué par le rattrapage. |
+| **Premier démarrage** | Pas de curseur : **rien n'est publié**. L'état courant de l'annuaire est lu pour remplir le cache (sans publication) et le curseur est placé sur la dernière modification existante. Pas de `origin=initial-sync` : la reprise d'un état existant n'est pas faite par la collecte. |
+| **Redémarrage** | Pas de relecture complète pour publier : le **rattrapage** interroge les entrées modifiées depuis le curseur (`modifyTimestamp >=`) et les publie avec `origin=catch-up`. La dernière entrée déjà envoyée peut être republiée (cache vide, `modifyTimestamp` à la seconde) ; le consolidator écarte le doublon par `id`. |
+| **Coupure de l'annuaire** | La session est relancée après `ARC_AGENT_COLLECTION_RETRY_DELAY` (délai fixe, 10 s) : flux rouvert, rattrapage depuis le curseur, puis lecture de l'état courant ; les entrées du cache qui ont disparu sont publiées comme supprimées (`origin=reconcile`). |
+| **Doublons** | Une notification sans différence d'attribut avec le cache est ignorée (la date ne suffit pas : `modifyTimestamp` n'a qu'une précision d'une seconde). |
 | **Ordre** | Garanti par entrée (clé = `entryUUID`), pas entre entrées. |
-| **Suppressions** | `accesslog` fournit l'ancienne entrée ; sinon le cache local fournit les attributs (Syncrepl ne renvoie que l'identifiant de l'entrée supprimée, sans attributs). |
+| **Suppressions** | Les derniers attributs connus viennent du cache local (Persistent Search et Syncrepl ne renvoient pas l'ancienne entrée) ; `accesslog` les fournirait nativement (étape 4). |
+
+### 4.9 Configuration de la collecte
+
+| Variable | Rôle | Défaut |
+|---|---|---|
+| `ARC_AGENT_COLLECTION_ENABLED` | Active le module de collecte | `false` |
+| `ARC_TOPICS_RAW_LDAP` | Topic des changements bruts | `iam.raw.ldap` |
+| `ARC_TOPICS_RAW_LDAP_CURSOR` | Topic compacté du curseur (créé avec `cleanup.policy=compact`) | `iam.raw.ldap.cursor` |
+| `ARC_AGENT_COLLECTION_FILTER` | Filtre LDAP des entrées suivies | `(\|(objectClass=inetOrgPerson)(objectClass=groupOfNames))` |
+| `ARC_AGENT_COLLECTION_RETRY_DELAY` | Délai avant une nouvelle session après une coupure | `10s` |
+| `ARC_AGENT_COLLECTION_OWN_WRITE_TTL` | Durée de mémorisation d'une écriture de l'agent (4.7) | `30s` |
+| `ARC_AGENT_COLLECTION_TIMEOUT` | Délai des requêtes LDAP ordinaires | `30s` |
+
+Côté consolidator : `IAM_TOPICS_LDAP` (`iam.raw.ldap`) et `IAM_LDAP_IGNORED_MEMBERS` (4.6).
+
+Le délai des requêtes ordinaires **n'est pas appliqué** à la connexion d'écoute : sinon Apache DS voit la recherche persistante coupée après environ 30 s de silence (constaté en démonstration).
+
+### 4.10 Limites connues
+
+- Une modification survenue pendant les quelques millisecondes du démarrage peut être manquée.
+- Le cache contient tout l'annuaire suivi, en mémoire.
+- Une suppression survenue pendant l'arrêt de l'agent n'est pas détectée (cache vide au redémarrage) ; elle l'est après une simple coupure de connexion.
+- Une coupure réseau silencieuse n'est pas détectée (pas de keepalive applicatif).
+- La mémoire anti-écho est locale à un processus (4.7).
+- Les adaptateurs Kafka n'ont pas de test unitaire ; ils sont validés par la démonstration.
 
 ## 5. Annuaire Apache Directory Server
 
@@ -246,23 +284,22 @@ Les groupes `arc-*` alimenteront les rôles de `arc-auth` (voir document 13) ; l
 Les tests d'intégration de `arc-agent-openldap` et de `arc-auth` démarrent une instance Apache DS **dans le processus de test** (partition en mémoire, LDIF de test, port éphémère). Ils couvrent :
 
 - chaque action de provisioning (3.2) contre un vrai annuaire ;
-- le module de collecte : une modification faite par le test produit le bon message `iam.raw.ldap` ;
+- le module de collecte : une modification faite par le test produit le bon message de changement, avec le bon `origin`, l'auteur lisible et sans coupure du flux après plusieurs secondes de silence ;
 - le `bind` d'authentification d'`arc-auth` (succès, mot de passe erroné, utilisateur inconnu).
 
-L'intercepteur embarqué (4.2) est utilisable dans ce seul contexte pour tester l'adaptateur de collecte sans réseau ; il ne remplace pas les tests via Persistent Search / Syncrepl.
+L'intercepteur embarqué (4.2) n'est pas utilisé : les tests passent par Persistent Search, comme en démonstration.
 
 ### 5.4 Démonstration (`demo/docker-compose.yml`)
 
-Ajouts : `apacheds` et `arc-agent-openldap` sont en place (l'agent écrit réellement dans l'Apache DS local, `ARC_AGENT_DRY_RUN=false`). Restent à venir :
+Ajouts réalisés : `apacheds` et `arc-agent-openldap` sont en place (l'agent écrit réellement dans l'Apache DS local, `ARC_AGENT_DRY_RUN=false`, collecte activée par `ARC_AGENT_COLLECTION_ENABLED=true`). Les services `topics-init` et `topics-init-compacted` créent `iam.raw.ldap` et `iam.raw.ldap.cursor` (compacté) ; `arc-consolidator` reçoit `IAM_TOPICS_LDAP` et `IAM_LDAP_IGNORED_MEMBERS`. Reste à venir :
 
 | Service | Rôle |
 |---|---|
-| `arc-agent-openldap` | Collecte temps réel (en plus du provisioning) |
 | `arc-auth` | Émission de jetons JWT (voir document 13) |
 
-Le service `topics-init` créera en plus `iam.raw.ldap` et `iam.raw.ldap.cursor` (compacté). Le service `arc-consolidator` recevra `IAM_TOPICS_LDAP`.
+La collecte et la consolidation LDAP ne fonctionnent avec les images publiées (`:stable`) qu'à partir des versions qui les contiennent (agent 0.2.0 et la version suivante du consolidator) ; avant cela, utiliser des images construites localement.
 
-Scénario actuel : `POST /jobs` (`targetSystem` `ldap://LDAP01`) crée un utilisateur, un groupe et une affectation dans Apache DS, vérifiables avec `ldapsearch`. Scénario cible : modifier l'entrée `alice` avec `ldapmodify` ; l'événement apparaît dans `iam.raw.ldap` puis dans `arc.sync.identity` en quelques secondes ; le `POST /jobs` exige alors un jeton.
+Scénario : `POST /jobs` (`targetSystem` `ldap://LDAP01`) crée un utilisateur, un groupe et une affectation dans Apache DS, vérifiables avec `ldapsearch` ; chaque écriture réapparaît dans `iam.raw.ldap` avec `origin=arc-agent`. Modifier l'entrée `alice` avec `ldapmodify` produit un message `origin=external` dans `iam.raw.ldap`, puis un événement `MODIFIED` dans `arc.sync.identity` en quelques secondes (de même, l'ajout ou le retrait d'un `member` produit une assignation `ADDED` ou `REMOVED` dans `arc.sync.assignment`). Scénario cible : le `POST /jobs` exige alors un jeton.
 
 ## 6. Observabilité
 
@@ -283,20 +320,20 @@ Scénario actuel : `POST /jobs` (`targetSystem` `ldap://LDAP01`) crée un utilis
 
 ## 8. Plan de mise en œuvre
 
-| Étape | Contenu | Dépôt |
-|---|---|---|
-| 1 | Squelette `arc-agent-openldap`, module d'exécution, tests sur Apache DS embarqué | `arc-agent-openldap` |
-| 2 | Service Apache DS dans la démo (image `tgbyte/apacheds`, LDIF monté) | parent (`demo/`) |
-| 3 | Module de collecte (Persistent Search puis Syncrepl, anti-écho, curseur), `LdapEventMapper` dans le consolidator | `arc-agent-openldap`, `arc-consolidator` |
-| 4 | Source `accesslog` pour OpenLDAP | `arc-agent-openldap` |
-| 5 | `arc-auth` et protection de `arc-publisher` / `product-manager` | voir document 13 |
+| Étape | Contenu | Dépôt | État |
+|---|---|---|---|
+| 1 | Squelette `arc-agent-openldap`, module d'exécution, tests sur Apache DS embarqué | `arc-agent-openldap` | fait |
+| 2 | Service Apache DS dans la démo (image `tgbyte/apacheds`, LDIF monté) | parent (`demo/`) | fait |
+| 3 | Module de collecte (Persistent Search, anti-écho, curseur), `LdapEventMapper` dans le consolidator | `arc-agent-openldap`, `arc-consolidator` | fait, validé en démonstration |
+| 4 | Source `accesslog` / Syncrepl pour OpenLDAP | `arc-agent-openldap` | à faire |
+| 5 | `arc-auth` et protection de `arc-publisher` / `product-manager` | voir document 13 | à faire |
 
 Chaque dépôt suit les mêmes règles que les dépôts existants : licence EUPL-1.2, conformité REUSE, DCO, Conventional Commits, architecture hexagonale.
 
 ## 9. Points ouverts
 
-1. **Support Syncrepl côté Apache DS** : à valider par essai (le fournisseur RFC 4533 d'Apache DS 2.x est à tester en `refreshAndPersist`). À défaut, Persistent Search avec cache.
-2. **Client LDAP** : API Apache Directory LDAP (Apache-2.0) ou UnboundID LDAP SDK (multi-licence) ; vérifier la compatibilité avec EUPL-1.2 avant choix.
-3. **Image `tgbyte/apacheds`** : image tierce à épingler par version et digest ; vérifier que l'image reste maintenue (sinon, repli sur une image construite par la démo).
+1. **Syncrepl et `accesslog` sur OpenLDAP** : à valider sur un vrai OpenLDAP (étape 4). Apache DS refuse Syncrepl (constaté) ; Persistent Search y est la seule source.
+2. **Client LDAP** : tranché, API Apache Directory LDAP 2.1.5 (Apache-2.0). UnboundID écarté pour sa licence.
+3. **Image `tgbyte/apacheds`** : image tierce à épingler par version et digest (aujourd'hui par version seulement) ; vérifier qu'elle reste maintenue (sinon, repli sur une image construite par la démo).
 4. **Version d'Apache DS** : `2.0.0.AM27` est une version « milestone » (pas de version finale 2.0.0) ; l'évolution du projet est à surveiller.
-5. **Initial sync** : traitement par le consolidator des événements `origin=initial-sync` (état vs création métier).
+5. **Reprise d'un état existant** : la collecte ne publie rien au premier démarrage (4.8). Un import initial d'un annuaire déjà peuplé reste à définir (outil dédié ou publication explicite), ainsi que le traitement des suppressions survenues pendant un arrêt de l'agent.
