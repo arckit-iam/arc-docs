@@ -56,8 +56,10 @@ Identique à `arc-agent-ad` : le record `ProvisioningCommand` (champs `jobId`, `
 | | `MODIFY` | `modify` (`replace`) des attributs de `changedAttributes` |
 | | `DELETE` | `delete` de l'entrée |
 | `arc.provisioning.entitlement` | `CREATE` / `MODIFY` / `DELETE` | idem, pour une entrée `groupOfNames` sous `groupsOu` |
-| `arc.provisioning.assignment` | `ADD` | `modify` `add member` sur le groupe |
-| | `REMOVE` | `modify` `delete member` sur le groupe |
+| `arc.provisioning.assignment` | `CREATE` / `ADD` | `modify` `add member` sur le groupe |
+| | `DELETE` / `REMOVE` | `modify` `delete member` sur le groupe |
+
+Les opérations sont idempotentes (Kafka livre au moins une fois) : créer une entrée existante, supprimer une entrée absente, ajouter un membre déjà présent ou retirer un non-membre est journalisé et ignoré. Pour un groupe, `entitlementId` est le `cn` du groupe.
 
 Particularités du schéma `groupOfNames` : l'attribut `member` est **obligatoire** (un groupe ne peut pas être vide). La création d'un groupe insère donc un membre technique (`member=cn=placeholder,...` configurable, par défaut le compte de service de l'agent) ; le retrait du dernier vrai membre ne supprime pas ce membre technique.
 
@@ -70,7 +72,7 @@ Particularités du schéma `groupOfNames` : l'attribut `member` est **obligatoir
 | `lastName` | `sn` |
 | `displayName` | `cn` / `displayName` |
 | `phone` | `telephoneNumber` |
-| identifiant (`identityName`) | `uid` (et RDN `uid=<identityName>`) |
+| identifiant (`identityId`) | `uid` (et RDN `uid=<identityId>`) |
 
 Les attributs inconnus sont ignorés avec un avertissement (jamais écrits à l'aveugle). Le DN d'une entrée est construit à partir du RDN et de `usersOu` / `groupsOu` ; aucun DN n'est repris tel quel d'un message sans validation de son suffixe (voir section 7).
 
@@ -87,14 +89,15 @@ Avec `ARC_AGENT_DRY_RUN=true` (défaut recommandé tant que l'annuaire cible n'e
 | Variable | Rôle | Défaut |
 |---|---|---|
 | `SPRING_KAFKA_BOOTSTRAP_SERVERS` | Broker Kafka | `localhost:9092` |
-| `ARC_PROVISIONING_TOPICS` | Topics consommés | `arc.provisioning.*` |
+| `ARC_TOPICS_PROVISIONING_IDENTITY` / `_ASSIGNMENT` / `_ENTITLEMENT` | Topics consommés | `arc.provisioning.identity` / `.assignment` / `.entitlement` |
 | `TARGET_SYSTEM` | Annuaire cible géré par cette instance | `ldap://LDAP01` |
 | `ARC_AGENT_CONSUMER_GROUP` | Groupe de consommateurs | `arc-agent-openldap` |
 | `ARC_AGENT_DRY_RUN` | Simulation sans écriture | `true` |
 | `ARC_AGENT_LDAP_URL` | URL de l'annuaire (`ldaps://` en production) | `ldap://localhost:10389` |
 | `ARC_AGENT_LDAP_BASE_DN` | Racine de l'annuaire | `dc=example,dc=com` |
 | `ARC_AGENT_LDAP_BIND_DN` / `ARC_AGENT_LDAP_BIND_PASSWORD` | Compte de service de l'agent | — |
-| `ARC_AGENT_LDAP_USERS_OU` / `ARC_AGENT_LDAP_GROUPS_OU` | Branches des identités et groupes | `ou=Users` / `ou=Groups` |
+| `ARC_AGENT_LDAP_USERS_OU` / `ARC_AGENT_LDAP_GROUPS_OU` | Branches des identités et groupes, relatives à `BASE_DN` | `ou=Users` / `ou=Groups` |
+| `ARC_AGENT_LDAP_GROUP_PLACEHOLDER_MEMBER` | Membre technique d'un groupe (voir 3.2) | compte de service, sinon `cn=arc-placeholder,<baseDn>` |
 
 Les mots de passe sont fournis par secret (jamais par image ni par dépôt).
 
@@ -217,7 +220,7 @@ Le projet Apache DS ne publie pas d'image Docker officielle. La démo utilise l'
 | Image | `tgbyte/apacheds:2.0.0.AM27` |
 | Port LDAP | `10389` (exposé sur `127.0.0.1` uniquement) |
 | Port LDAPS | `10636` (optionnel) |
-| Racine | `APACHEDS_DOMAIN_NAME=example`, `APACHEDS_DOMAIN_SUFFIX=com` : `dc=example,dc=com` |
+| Racine | `APACHEDS_DOMAIN_NAME=arc`, `APACHEDS_DOMAIN_SUFFIX=local` : `dc=arc,dc=local` (l'image crée `ou=people` et `ou=groups`) |
 | Compte d'administration | `uid=admin,ou=system` ; `APACHEDS_ADMIN_PASSWORD` doit être défini (le défaut `secret` est connu de tous) |
 | Données initiales | fichiers LDIF montés dans `/ldif.d/`, importés au premier démarrage |
 | Persistance | volume `/var/lib/apacheds` (optionnel en démo) |
@@ -227,20 +230,16 @@ Points de vigilance : image tierce non auditée par le projet Apache (utilisée 
 Arborescence de démonstration :
 
 ```
-dc=example,dc=com
-├── ou=Users
-│   ├── uid=alice      (inetOrgPerson, mot de passe de démo)
+dc=arc,dc=local
+├── ou=people
+│   ├── uid=alice      (inetOrgPerson)
 │   └── uid=bob
-├── ou=Groups
-│   ├── cn=arc-admins      (member: alice)
-│   ├── cn=arc-publishers  (member: bob)
-│   ├── cn=arc-readers
-│   └── cn=demo-readers
-└── ou=ServiceAccounts
-    └── uid=product-manager
+└── ou=groups
+    ├── cn=arc-admins      (member: alice)
+    └── cn=arc-readers     (member: alice, bob)
 ```
 
-Les groupes `arc-*` alimentent les rôles de `arc-auth` ; les autres groupes servent d'entitlements de démonstration.
+Les groupes `arc-*` alimenteront les rôles de `arc-auth` (voir document 13) ; les groupes créés par provisioning (par exemple `demo-readers`) servent d'entitlements de démonstration.
 
 ### 5.3 Instance embarquée dans les tests
 
@@ -254,17 +253,16 @@ L'intercepteur embarqué (4.2) est utilisable dans ce seul contexte pour tester 
 
 ### 5.4 Démonstration (`demo/docker-compose.yml`)
 
-Ajouts prévus :
+Ajouts : `apacheds` et `arc-agent-openldap` sont en place (l'agent écrit réellement dans l'Apache DS local, `ARC_AGENT_DRY_RUN=false`). Restent à venir :
 
 | Service | Rôle |
 |---|---|
-| `apacheds` | Annuaire LDAP local |
-| `arc-agent-openldap` | Provisioning vers `ldap://LDAP01` (dry-run par défaut) et collecte temps réel |
+| `arc-agent-openldap` | Collecte temps réel (en plus du provisioning) |
 | `arc-auth` | Émission de jetons JWT (voir document 13) |
 
-Le service `topics-init` crée en plus `iam.raw.ldap` et `iam.raw.ldap.cursor` (compacté). Le service `arc-consolidator` reçoit `IAM_TOPICS_LDAP`.
+Le service `topics-init` créera en plus `iam.raw.ldap` et `iam.raw.ldap.cursor` (compacté). Le service `arc-consolidator` recevra `IAM_TOPICS_LDAP`.
 
-Scénario de démonstration : modifier l'entrée `alice` avec `ldapmodify` (ou un client graphique) ; l'événement apparaît dans `iam.raw.ldap` puis dans `arc.sync.identity` en quelques secondes ; une commande `POST /jobs` (avec jeton) crée un utilisateur dans Apache DS une fois le dry-run désactivé.
+Scénario actuel : `POST /jobs` (`targetSystem` `ldap://LDAP01`) crée un utilisateur, un groupe et une affectation dans Apache DS, vérifiables avec `ldapsearch`. Scénario cible : modifier l'entrée `alice` avec `ldapmodify` ; l'événement apparaît dans `iam.raw.ldap` puis dans `arc.sync.identity` en quelques secondes ; le `POST /jobs` exige alors un jeton.
 
 ## 6. Observabilité
 
