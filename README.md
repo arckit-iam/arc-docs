@@ -42,7 +42,7 @@ Scripts et fichiers d'exemple référencés par la documentation de collecte AD 
 | `arc-consolidator` | Normalise les événements `iam.raw.*` vers les topics `arc.sync.*` |
 | `arc-publisher` | Planifie et publie les événements de provisioning (`arc.provisioning`) |
 | `arc-agent-ad` | Agent d'exécution du provisioning Active Directory |
-| `arc-agent-openldap` *(en conception)* | Agent de provisioning LDAP et de collecte temps réel des changements (documents 12) |
+| `arc-agent-openldap` | Agent de provisioning LDAP et de collecte temps réel des changements, validé sur Apache DS (document 12) |
 | `arc-auth` *(en conception)* | Authentification LDAP et émission de jetons JWT (document 13) |
 | `profile` | Service métier de gestion des profils et permissions ; appelle `arc-publisher` pour créer ou supprimer les groupes AD |
 | Dépôt GitOps de déploiement (privé) | Charts Helm et ressources Flux ; intégration proposée en service payant |
