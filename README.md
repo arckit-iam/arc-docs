@@ -22,6 +22,7 @@ Ce dépôt regroupe la documentation transverse. La documentation propre à un c
 | [11-adapter-sources.md](docs/11-adapter-sources.md) | Adaptateurs de sources (AD, applications, LDAP) |
 | [12-agent-openldap.md](docs/12-agent-openldap.md) | Conception : agent OpenLDAP, collecte LDAP temps réel vers Kafka, annuaire Apache DS (démo et tests) |
 | [13-authentification-jwt.md](docs/13-authentification-jwt.md) | Service d'authentification `arc-auth` (bind LDAP, jetons JWT) et protection des API d'`arc-publisher` et de `product-manager` |
+| [14-comptes-et-console.md](docs/14-comptes-et-console.md) | Types de compte configurables, `identity-manager`, découverte des comptes, console web `arc-console` et abandon de la passerelle |
 
 ### Déploiement et CI/CD
 
@@ -44,7 +45,9 @@ Scripts et fichiers d'exemple référencés par la documentation de collecte AD 
 | `arc-agent-ad` | Agent d'exécution du provisioning Active Directory |
 | `arc-agent-openldap` | Agent de provisioning LDAP et de collecte temps réel des changements, validé sur Apache DS (document 12) |
 | `arc-auth` | Authentification LDAP et émission de jetons JWT (document 13) |
-| `profile` | Service métier de gestion des profils et permissions ; appelle `arc-publisher` pour créer ou supprimer les groupes AD |
+| `profile` (dépôt `product-manager`) | Produits, profils et comptes non utilisateurs ; appelle `arc-publisher` pour créer ou supprimer les groupes AD (documents 13 et 14) |
+| `identity-manager` | Identités humaines et comptes utilisateurs (document 14) |
+| `arc-console` | Console web à authentification JWT (document 14) |
 | Dépôt GitOps de déploiement (privé) | Charts Helm et ressources Flux ; intégration proposée en service payant |
 
 ## Licence
