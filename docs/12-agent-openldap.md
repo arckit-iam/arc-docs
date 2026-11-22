@@ -297,7 +297,7 @@ Ajouts réalisés : `apacheds` et `arc-agent-openldap` sont en place (l'agent é
 |---|---|
 | `arc-auth` | Émission de jetons JWT (voir document 13) |
 
-La collecte et la consolidation LDAP ne fonctionnent avec les images publiées (`:stable`) qu'à partir des versions qui les contiennent (agent 0.2.0 et la version suivante du consolidator) ; avant cela, utiliser des images construites localement.
+Les images publiées (`:stable`) contiennent la collecte et la consolidation LDAP depuis `arc-agent-openldap` 0.2.0 et `arc-consolidator` 1.2.1 (la 1.2.0 n'a pas été publiée : son build a échoué sur une étape GitOps, retirée depuis) : la démonstration du dépôt parent fonctionne sans image construite localement. Avec des versions antérieures, la collecte n'est pas disponible.
 
 Scénario : `POST /jobs` (`targetSystem` `ldap://LDAP01`) crée un utilisateur, un groupe et une affectation dans Apache DS, vérifiables avec `ldapsearch` ; chaque écriture réapparaît dans `iam.raw.ldap` avec `origin=arc-agent`. Modifier l'entrée `alice` avec `ldapmodify` produit un message `origin=external` dans `iam.raw.ldap`, puis un événement `MODIFIED` dans `arc.sync.identity` en quelques secondes (de même, l'ajout ou le retrait d'un `member` produit une assignation `ADDED` ou `REMOVED` dans `arc.sync.assignment`). Scénario cible : le `POST /jobs` exige alors un jeton.
 
