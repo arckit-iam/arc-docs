@@ -34,6 +34,17 @@ ARC_ACCOUNTS_TYPES_0_METADATA_0_REQUIRED=false
 
 Les métadonnées sont stockées en **JSONB** dans PostgreSQL : ajouter un champ ne nécessite aucune migration.
 
+### Comptes utilisateurs, matricules et contrats (`identity-manager`)
+
+- Le **matricule** est généré à la création d'une identité : `I<DDDDDD>` (séquence PostgreSQL). Il n'est pas saisi.
+- Deux types de comptes utilisateurs sont configurés : `standard` (`I<DDDDDD>`, même valeur que le matricule) et `admin` (`A<DDDDDD>`, corrélé à l'identité `I<DDDDDD>` de même numéro).
+- Deux gabarits optionnels par type : `identityTemplate` (matricule déduit des groupes capturés, ex. `I{number}`) et `identifierTemplate` (identifiant généré si le compte est créé pour une identité sans identifiant, ex. `A{number}`).
+- Une identité porte des **contrats** dont les types (prestataire, RH, stagiaire...) et les métadonnées sont configurables (`ARC_CONTRACTS_TYPES_<n>_*`).
+
+### Périmètre des profils (TIER0, TIER1, TIER2)
+
+Le périmètre est un attribut des **profils** (groupes) de `product-manager`, pas des comptes techniques. Il reprend le modèle d'administration en niveaux : TIER0 = infrastructure d'identité (annuaire, contrôleurs de domaine), TIER1 = serveurs et applications, TIER2 = postes et utilisateurs standard. Il est transmis à `arc-publisher` lors du provisioning du groupe. Un compte non utilisateur n'a qu'un type, un produit et des métadonnées.
+
 ## 3. Alimentation des comptes
 
 ```text
