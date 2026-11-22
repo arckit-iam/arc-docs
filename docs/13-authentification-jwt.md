@@ -1,6 +1,6 @@
 # 13 — Authentification et jetons JWT (`arc-auth`)
 
-> **Statut : conception.** `arc-auth` n'est pas encore implémenté. Aujourd'hui, l'API d'`arc-publisher` (`POST /jobs`) n'est pas authentifiée : elle n'est exposée que sur `127.0.0.1` dans la démonstration et doit être protégée par le réseau en déploiement.
+> **Statut : implémenté et validé sur Apache DS.** `arc-auth` ([dépôt](https://github.com/arckit-iam/arc-auth)) émet les jetons ; `arc-publisher` et `product-manager` les exigent sur toute leur API, sauf `/actuator/health`. L'authentification est toujours imposée : il n'existe pas de mode « sécurité désactivée ». Les écarts avec la conception initiale sont signalés dans le texte.
 
 ## 1. Objectifs
 
@@ -41,7 +41,7 @@ sequenceDiagram
 
 | Méthode et chemin | Description | Accès |
 |---|---|---|
-| `POST /token` | Corps JSON `{ "username": "...", "password": "..." }`. Retourne `200` avec `{ "access_token": "...", "token_type": "Bearer", "expires_in": 900 }` ou `401` (message générique identique pour utilisateur inconnu et mot de passe erroné). | Public |
+| `POST /token` | Corps JSON `{ "username": "...", "password": "..." }`. Retourne `200` avec `{ "access_token": "...", "token_type": "Bearer", "expires_in": 900 }` ou `401` (message générique identique pour utilisateur inconnu, mot de passe erroné ou utilisateur sans rôle ARC). `429` si la limitation de débit est atteinte, `503` si l'annuaire est injoignable. Un mot de passe vide n'est jamais transmis à l'annuaire. La réponse n'est pas mise en cache (`Cache-Control: no-store`). | Public |
 | `GET /.well-known/jwks.json` | Clés publiques de signature (JWKS) | Public |
 | `GET /actuator/health` | Santé du service (connexion LDAP) | Interne |
 
@@ -75,15 +75,15 @@ Revendications :
 | `name` | Nom d'affichage (`cn`) |
 | `roles` | Liste de rôles dérivés des groupes LDAP |
 
-Table de correspondance groupes → rôles (configurable, `arc.auth.role-mapping`) :
+Table de correspondance groupes → rôles (noms de groupes configurables : `ARC_AUTH_ROLE_ADMIN_GROUP`, `ARC_AUTH_ROLE_PUBLISHER_GROUP`, `ARC_AUTH_ROLE_READER_GROUP`) :
 
-| Groupe LDAP | Rôle |
+| Groupe LDAP (`cn`) | Rôle |
 |---|---|
-| `cn=arc-admins,ou=Groups,…` | `ARC_ADMIN` |
-| `cn=arc-publishers,ou=Groups,…` | `ARC_PUBLISHER` |
-| `cn=arc-readers,ou=Groups,…` | `ARC_READER` |
+| `arc-admins` | `ARC_ADMIN` |
+| `arc-publishers` | `ARC_PUBLISHER` |
+| `arc-readers` | `ARC_READER` |
 
-Les groupes non listés ne produisent aucun rôle. Aucun mot de passe, aucune donnée sensible autre que le nom d'affichage n'est placé dans le jeton.
+Les branches de recherche dépendent de l'annuaire (`ou=Users`/`ou=Groups` par défaut, `ou=people`/`ou=groups` dans la démonstration) et se règlent avec `ARC_AUTH_LDAP_USER_SEARCH_BASE` et `ARC_AUTH_LDAP_GROUP_SEARCH_BASE`. Les groupes non listés ne produisent aucun rôle ; un utilisateur sans aucun rôle ARC ne reçoit pas de jeton (`401`). Aucun mot de passe, aucune donnée sensible autre que le nom d'affichage n'est placé dans le jeton.
 
 ## 6. Gestion des clés
 
@@ -91,23 +91,26 @@ Les groupes non listés ne produisent aucun rôle. Aucun mot de passe, aucune do
 |---|---|
 | Génération | Paire RSA 2048 bits minimum, créée hors du service et fournie par secret (`ARC_AUTH_JWT_PRIVATE_KEY_PATH`). En démonstration seulement, génération éphémère au démarrage (les jetons n'y survivent pas à un redémarrage). |
 | Identification | `kid` dans chaque jeton ; le JWKS publie toutes les clés actives. |
-| Rotation | Ajout de la nouvelle clé au JWKS, bascule de la signature, retrait de l'ancienne après expiration du dernier jeton signé avec elle. |
+| Rotation | Ajout de la nouvelle clé au JWKS (`ARC_AUTH_JWT_ADDITIONAL_PUBLIC_KEY_PATHS`, clés publiques PEM séparées par des virgules), bascule de la signature, retrait de l'ancienne après expiration du dernier jeton signé avec elle. |
 | Algorithme | RS256 uniquement ; les services rejettent `none` et tout algorithme autre que celui attendu. |
 
 ## 7. Protection des services (ressource serveur)
 
-`arc-publisher` et `product-manager` valident le jeton avec Spring Security `oauth2-resource-server` : récupération du JWKS via `jwk-set-uri` (mise en cache), contrôle de la signature, de `exp`/`nbf`, de `iss` et `aud`. La configuration de sécurité est placée dans la couche **infrastructure** ; le domaine n'a aucune dépendance à Spring Security.
+`arc-publisher` et `product-manager` valident le jeton avec Spring Security `oauth2-resource-server` : récupération du JWKS via `jwk-set-uri` (à la demande, mise en cache, aucun appel au démarrage), contrôle de la signature, de `exp`/`nbf`, de `iss` et `aud`. Les rôles sont lus dans le claim `roles`. La configuration de sécurité est placée dans la couche **infrastructure** (`arc-publisher`) ou dans les adapters d'exposition (`product-manager`) ; le domaine n'a aucune dépendance à Spring Security. L'API est sans état : ni session ni protection CSRF, l'authentification Basic est refusée.
 
 | Service | Endpoint | Rôle requis |
 |---|---|---|
 | `arc-publisher` | `POST /jobs` | `ARC_PUBLISHER` ou `ARC_ADMIN` |
-| `arc-publisher` | `GET /jobs/**` | `ARC_READER`, `ARC_PUBLISHER` ou `ARC_ADMIN` |
-| `arc-publisher` | `/actuator/health` | public |
-| `product-manager` | API métier | rôles définis par le service (à spécifier) |
+| `arc-publisher` | `DELETE /jobs/{id}` | `ARC_PUBLISHER` ou `ARC_ADMIN` |
+| `arc-publisher` | `GET /jobs`, `GET /jobs/{id}` | `ARC_READER`, `ARC_PUBLISHER` ou `ARC_ADMIN` |
+| `product-manager` | `GET /products/**` | `ARC_READER`, `ARC_PUBLISHER` ou `ARC_ADMIN` |
+| `product-manager` | `POST`, `PUT`, `DELETE` sur `/products/**` | `ARC_PUBLISHER` ou `ARC_ADMIN` |
+| les deux | `/actuator/health` | public |
+| les deux | tout autre chemin | refusé |
 
-`product-manager`, qui appelle `arc-publisher`, s'authentifie auprès d'`arc-auth` avec un **compte de service** (entrée sous `ou=ServiceAccounts`, appartenant à `arc-publishers`) et transmet le jeton obtenu. Le jeton du compte de service est réutilisé jusqu'à son expiration puis renouvelé.
+`product-manager`, qui appelle `arc-publisher`, s'authentifie auprès d'`arc-auth` avec un **compte de service** (variables `ARC_AUTH_USERNAME` et `ARC_AUTH_PASSWORD` ; compte placé par exemple sous `ou=ServiceAccounts` et membre de `arc-publishers`) et transmet le jeton obtenu. Le jeton est conservé jusqu'à 30 secondes avant son expiration puis renouvelé ; si `arc-publisher` le refuse (`401`), un nouveau jeton est demandé et l'appel est retenté une seule fois.
 
-Le traçage du `jobId` est complété par `sub` du jeton (« qui a demandé ce provisioning »), transmis dans les journaux et dans `correlationId` / métadonnées du job.
+La transmission de `sub` (« qui a demandé ce provisioning ») dans les journaux et les métadonnées du job n'est pas encore implémentée (point ouvert 3).
 
 ## 8. Configuration
 
@@ -122,9 +125,20 @@ Le traçage du `jobId` est complété par `sub` du jeton (« qui a demandé ce p
 | `ARC_AUTH_JWT_AUDIENCE` | Valeur de `aud` | `arc` |
 | `ARC_AUTH_JWT_TTL` | Durée de vie du jeton | `PT15M` |
 | `ARC_AUTH_JWT_PRIVATE_KEY_PATH` | Clé privée PEM | clé éphémère (démo seulement) |
-| `ARC_AUTH_JWT_KEY_ID` | `kid` | généré |
+| `ARC_AUTH_JWT_KEY_ID` | `kid` | empreinte SHA-256 de la clé publique |
+| `ARC_AUTH_JWT_ADDITIONAL_PUBLIC_KEY_PATHS` | Clés publiques PEM supplémentaires publiées dans le JWKS (rotation) | — |
+| `ARC_AUTH_ROLE_ADMIN_GROUP` / `_PUBLISHER_GROUP` / `_READER_GROUP` | Noms de groupes correspondant aux rôles | `arc-admins` / `arc-publishers` / `arc-readers` |
+| `ARC_AUTH_RATE_LIMIT_MAX_FAILURES_PER_ADDRESS` / `_PER_IDENTIFIER` / `_WINDOW` | Limitation de débit des échecs | `20` / `5` / `PT5M` |
 
-Côté services protégés : `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI`, `..._ISSUER_URI` et `ARC_SECURITY_AUDIENCE`.
+Côté services protégés (`arc-publisher`, `product-manager`) :
+
+| Variable | Rôle | Défaut |
+|---|---|---|
+| `ARC_SECURITY_ISSUER_URI` | Valeur attendue de `iss` (obligatoire ; égale à `ARC_AUTH_JWT_ISSUER`). Aucune découverte OIDC : le JWKS est donné explicitement. | — |
+| `ARC_SECURITY_JWK_SET_URI` | Clés publiques d'`arc-auth` | `http://localhost:8082/.well-known/jwks.json` (`arc-publisher`), `http://arc-auth:8082/.well-known/jwks.json` (`product-manager`) |
+| `ARC_SECURITY_AUDIENCE` | Valeur attendue de `aud` | `arc` |
+
+Côté `product-manager` uniquement : `ARC_AUTH_URL` (défaut `http://arc-auth:8082`), `ARC_AUTH_USERNAME` et `ARC_AUTH_PASSWORD` (compte de service, obligatoires).
 
 ## 9. Sécurité
 
@@ -137,13 +151,13 @@ Côté services protégés : `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_
 
 ## 10. Démonstration
 
-`arc-auth` est ajouté à `demo/docker-compose.yml` (port `127.0.0.1:8082`), configuré sur le service Apache DS (document 12, section 5). Scénario cible :
+`arc-auth` est ajouté à `demo/docker-compose.yml` (port `127.0.0.1:8082`), configuré sur le service Apache DS (document 12, section 5). Les comptes de démonstration ont des mots de passe **publics** : `alice` / `arc-demo-alice` (`ARC_ADMIN`, `ARC_READER`) et `bob` / `arc-demo-bob` (`ARC_READER`). Scénario :
 
 ```bash
 # 1. Obtenir un jeton
 TOKEN=$(curl -s -X POST http://localhost:8082/token \
   -H 'Content-Type: application/json' \
-  -d '{"username":"bob","password":"<mot de passe de démo>"}' | jq -r .access_token)
+  -d '{"username":"alice","password":"arc-demo-alice"}' | jq -r .access_token)
 
 # 2. Appeler l'API protégée
 curl -X POST http://localhost:8081/jobs \
@@ -152,9 +166,11 @@ curl -X POST http://localhost:8081/jobs \
   -d @job.json
 ```
 
-Sans jeton ou avec un jeton invalide, `arc-publisher` répond `401` ; avec un rôle insuffisant, `403`.
+Sans jeton ou avec un jeton invalide, `arc-publisher` répond `401` ; avec `bob` (lecteur), `GET /jobs` réussit et `POST /jobs` répond `403`.
 
 ## 11. Plan de mise en œuvre
+
+Réalisé :
 
 1. `arc-auth` : API `/token` et `/.well-known/jwks.json`, bind LDAP, tests sur Apache DS embarqué.
 2. Protection de `arc-publisher` (validation JWT, règles par rôle), tests d'API.
@@ -163,7 +179,8 @@ Sans jeton ou avec un jeton invalide, `arc-publisher` répond `401` ; avec un r�
 
 ## 12. Points ouverts
 
-1. Conserver un mode « sécurité désactivée » (`ARC_SECURITY_ENABLED=false`) pour le développement local, ou imposer l'authentification partout ?
-2. Rôles et endpoints à protéger dans `product-manager` : à spécifier avec l'équipe produit.
-3. Stockage de la clé de signature en production (secret Kubernetes, coffre) : dépend de l'environnement de déploiement.
-4. Besoin futur d'OIDC (fournisseur d'identité externe) : `arc-auth` pourrait alors être remplacé par un fournisseur du marché sans changer la validation côté services.
+Tranchés : l'authentification est toujours imposée (pas de mode désactivé) ; les rôles de `product-manager` sont définis en section 7.
+
+1. Stockage de la clé de signature en production (secret Kubernetes, coffre) : dépend de l'environnement de déploiement.
+2. Besoin futur d'OIDC (fournisseur d'identité externe) : `arc-auth` pourrait alors être remplacé par un fournisseur du marché sans changer la validation côté services.
+3. Traçabilité : transmettre `sub` du jeton dans les journaux et les métadonnées des jobs.

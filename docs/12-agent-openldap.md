@@ -1,6 +1,6 @@
 # 12 — Agent OpenLDAP, collecte LDAP temps réel et annuaire Apache DS
 
-> **Statut : implémenté et validé sur Apache DS** (étapes 1 à 3 du plan, section 8) : module d'exécution, collecte temps réel par Persistent Search, `LdapEventMapper` du consolidator, service Apache DS de la démonstration. **Reste à faire** : source `accesslog` / Syncrepl pour OpenLDAP (étape 4, à valider sur un vrai OpenLDAP) et `arc-auth` (étape 5). Les points ouverts sont en section 9.
+> **Statut : implémenté et validé sur Apache DS** (étapes 1 à 3 et 5 du plan, section 8) : module d'exécution, collecte temps réel par Persistent Search, `LdapEventMapper` du consolidator, service Apache DS de la démonstration, `arc-auth` et protection des API (document 13). **Reste à faire** : source `accesslog` / Syncrepl pour OpenLDAP (étape 4, à valider sur un vrai OpenLDAP). Les points ouverts sont en section 9.
 
 ## 1. Objectifs et périmètre
 
@@ -326,7 +326,7 @@ Scénario : `POST /jobs` (`targetSystem` `ldap://LDAP01`) crée un utilisateur, 
 | 2 | Service Apache DS dans la démo (image `tgbyte/apacheds`, LDIF monté) | parent (`demo/`) | fait |
 | 3 | Module de collecte (Persistent Search, anti-écho, curseur), `LdapEventMapper` dans le consolidator | `arc-agent-openldap`, `arc-consolidator` | fait, validé en démonstration |
 | 4 | Source `accesslog` / Syncrepl pour OpenLDAP | `arc-agent-openldap` | à faire |
-| 5 | `arc-auth` et protection de `arc-publisher` / `product-manager` | voir document 13 | à faire |
+| 5 | `arc-auth` et protection de `arc-publisher` / `product-manager` | voir document 13 | fait, validé en démonstration |
 
 Chaque dépôt suit les mêmes règles que les dépôts existants : licence EUPL-1.2, conformité REUSE, DCO, Conventional Commits, architecture hexagonale.
 
