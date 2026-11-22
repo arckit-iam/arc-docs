@@ -210,15 +210,19 @@ Apache DS est l'annuaire **de développement et de démonstration** : léger, 10
 
 ### 5.2 Conteneur de démonstration
 
-Apache DS ne fournit pas d'image Docker officielle. La démo construit une image minimale (`demo/apacheds/Dockerfile`) à partir de la distribution Apache DS 2.x et d'un JRE.
+Le projet Apache DS ne publie pas d'image Docker officielle. La démo utilise l'image communautaire **`tgbyte/apacheds`** (Apache-2.0, Apache DS `2.0.0.AM27`, JRE 21, `linux/amd64`, maintenue en 2026), **sans construire d'image propre**. Elle est épinglée par version (et idéalement par digest) ; les alternatives `reucon/apacheds` (également maintenue) et `openmicroscopy/apacheds` (peu active) ont été écartées. `itzg/apacheds`, la plus téléchargée, est abandonnée depuis 2016.
 
 | Élément | Valeur |
 |---|---|
+| Image | `tgbyte/apacheds:2.0.0.AM27` |
 | Port LDAP | `10389` (exposé sur `127.0.0.1` uniquement) |
 | Port LDAPS | `10636` (optionnel) |
-| Racine | `dc=example,dc=com` |
-| Compte d'administration | `uid=admin,ou=system` ; mot de passe **modifié** au premier démarrage (la valeur par défaut d'Apache DS est connue de tous) |
-| Données initiales | fichier LDIF chargé au démarrage |
+| Racine | `APACHEDS_DOMAIN_NAME=example`, `APACHEDS_DOMAIN_SUFFIX=com` : `dc=example,dc=com` |
+| Compte d'administration | `uid=admin,ou=system` ; `APACHEDS_ADMIN_PASSWORD` doit être défini (le défaut `secret` est connu de tous) |
+| Données initiales | fichiers LDIF montés dans `/ldif.d/`, importés au premier démarrage |
+| Persistance | volume `/var/lib/apacheds` (optionnel en démo) |
+
+Points de vigilance : image tierce non auditée par le projet Apache (utilisée uniquement pour la démonstration, jamais en production) ; les fichiers de `/ldif.d/` ne sont importés qu'une fois, tant que le volume n'est pas réinitialisé.
 
 Arborescence de démonstration :
 
@@ -284,7 +288,7 @@ Scénario de démonstration : modifier l'entrée `alice` avec `ldapmodify` (ou u
 | Étape | Contenu | Dépôt |
 |---|---|---|
 | 1 | Squelette `arc-agent-openldap`, module d'exécution, tests sur Apache DS embarqué | `arc-agent-openldap` |
-| 2 | Service Apache DS dans la démo (Dockerfile, LDIF) | parent (`demo/`) |
+| 2 | Service Apache DS dans la démo (image `tgbyte/apacheds`, LDIF monté) | parent (`demo/`) |
 | 3 | Module de collecte (Persistent Search puis Syncrepl, anti-écho, curseur), `LdapEventMapper` dans le consolidator | `arc-agent-openldap`, `arc-consolidator` |
 | 4 | Source `accesslog` pour OpenLDAP | `arc-agent-openldap` |
 | 5 | `arc-auth` et protection de `arc-publisher` / `product-manager` | voir document 13 |
@@ -295,6 +299,6 @@ Chaque dépôt suit les mêmes règles que les dépôts existants : licence EUPL
 
 1. **Support Syncrepl côté Apache DS** : à valider par essai (le fournisseur RFC 4533 d'Apache DS 2.x est à tester en `refreshAndPersist`). À défaut, Persistent Search avec cache.
 2. **Client LDAP** : API Apache Directory LDAP (Apache-2.0) ou UnboundID LDAP SDK (multi-licence) ; vérifier la compatibilité avec EUPL-1.2 avant choix.
-3. **Création de partition Apache DS** : amorçage de la configuration (`dc=example,dc=com`) par fichier de configuration LDIF à prévoir dans l'image.
-4. **Version d'Apache DS** : figer une version 2.x publiée ; l'évolution du projet est à surveiller.
+3. **Image `tgbyte/apacheds`** : image tierce à épingler par version et digest ; vérifier que l'image reste maintenue (sinon, repli sur une image construite par la démo).
+4. **Version d'Apache DS** : `2.0.0.AM27` est une version « milestone » (pas de version finale 2.0.0) ; l'évolution du projet est à surveiller.
 5. **Initial sync** : traitement par le consolidator des événements `origin=initial-sync` (état vs création métier).
