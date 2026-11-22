@@ -44,7 +44,7 @@ InstantAccessProvider V1 est une plateforme **centralisée de gouvernance des id
 | Flux | Format | Description |
 |-----|--------|-------------|
 | **Entrée** | `arc.sync.identity`, `arc.sync.entitlement`, `arc.sync.assignment` | 3 Topics Kafka produits par **arc-consolidator** contenant l'image normalisée des identités, des entitlements et des affectations de tous les systèmes sources (AD, applications, systèmes RH). Chaque message inclut un champ `system` (e.g., `ad://corp.example.com`) permettant de déterminer la source et la cible. |
-| **Sortie** | `arc.provisioning` | Topics Kafka contenant les ordres d'assignation (job) à envoyer aux systèmes cibles via arc-publisher |
+| **Sortie** | `arc.provisioning` | Topics Kafka contenant les ordres d'assignation à envoyer aux systèmes cibles via arc-publisher |
 
 ### 1.3 Principes clés
 
@@ -96,13 +96,13 @@ InstantAccessProvider V1 est une plateforme **centralisée de gouvernance des id
 |---------|-----------------|
 | **Identity Service** | Gestion du référentiel des identités, des clés d'identification, des données contextuelles (postes, contrats) |
 | **Role Service** | Modèle de rôles, création/modification/suppression, validation multi-niveaux |
-| **Assignment Service** | Affectation des rôles aux identités, gestion du cycle de vie des ordres (job), appel de l'API `arc-publisher` (`POST /jobs`) avec les dates d'effet |
+| **Assignment Service** | Affectation des rôles aux identités, gestion du cycle de vie des ordres, appel de l'API `arc-publisher` (`POST /orders`) avec les dates d'effet |
 | **Config Service** | Configuration par tenant (clients), gestion des règles d'affectation automatiques, mappings clé → account, niveaux de validation |
 | **Audit Service** | Logging de toutes les opérations, traçabilité, requêtes d'audit |
 | **Drift Service** | Détection des écarts, alertes, rapports de non-conformité |
 
 **Composants externes (hors IAM Core) :**
-- **arc-publisher** : persiste les jobs en PostgreSQL, recalcule périodiquement les jobs `pending` et publie dans `arc.provisioning.*` au bon moment.
+- **arc-publisher** : persiste les ordres en PostgreSQL, recalcule périodiquement les ordres `pending` et publie dans `arc.provisioning.*` au bon moment.
 - **Agents (un par cible)** : consomment `arc.provisioning.*` en temps réel et exécutent les ordres, sans logique de temporalité.
 
 ### 2.3 Communication inter-services
@@ -621,14 +621,14 @@ Chaque règle est réévaluée dans les scénarios :
 Si la condition est vraie :
 
 1. Une affectation est **créée automatiquement** (state = `pending`)
-2. Un ordre d'assignation est généré et envoyé à `arc-publisher` via API (`POST /jobs`)
+2. Un ordre d'assignation est généré et envoyé à `arc-publisher` via API (`POST /orders`)
 3. Audit tracé avec `ruleId` comme source
 4. Notification au responsable métier
 
 Si la condition devient fausse (rétroactivement) :
 
 1. L'affectation existante est **révoquée** (state = `revoked`)
-2. Un ordre de retrait est envoyé à `arc-publisher` via API (`POST /jobs`)
+2. Un ordre de retrait est envoyé à `arc-publisher` via API (`POST /orders`)
 3. Audit tracé
 
 ### 10.3 Cycle de vie d'une affectation
@@ -644,7 +644,7 @@ Si la condition devient fausse (rétroactivement) :
            ▼
       [Approved] ◄─── peut être révoquée manuellement
            │
-         ├─► Ordre créé dans arc-publisher (API POST /jobs)
+         ├─► Ordre créé dans arc-publisher (API POST /orders)
          │   (avec startDate/endDate ou date d'effet métier)
            │
            ▼
@@ -677,13 +677,13 @@ Avant de créer une affectation, le système vérifie :
 
 ## 11. Ordres d'assignation et cycle de vie
 
-### 11.1 Structure de l'ordre (Job)
+### 11.1 Structure de l'ordre
 
-Un **Job** (ou ordre d'assignation) représente l'intention de provisionner ou révoquer un droit dans un système cible.
+Un **ordre** (ou ordre d'assignation) représente l'intention de provisionner ou révoquer un droit dans un système cible.
 
 | Champ | Type | Description |
 |-------|------|-------------|
-| `jobId` | UUID | Identifiant unique généré par la plateforme |
+| `orderId` | UUID | Identifiant unique généré par la plateforme |
 | `assignmentId` | UUID | Lien vers l'Assignment |
 | `sourceSystem` | String | Système destination (`activedirectory`, `app-a`, `aws-iam`…) |
 | `operationType` | Enum | `add` / `remove` / `modify` |
@@ -694,7 +694,7 @@ Un **Job** (ou ordre d'assignation) représente l'intention de provisionner ou r
 | `endDate` | DateTime | Date de fin de l'affectation (optionnelle) |
 | `state` | Enum | `pending` / `queued` / `sent` / `failed` / `revoked` / `completed` |
 | `createdAt` | DateTime | Horodatage création |
-| `createdBy` | UUID | Qui a créé le job |
+| `createdBy` | UUID | Qui a créé l'ordre |
 | `scheduledFor` | DateTime | Date/heure d'exécution planifiée |
 | `executedAt` | DateTime | Horodatage réelle exécution (quand arc-publisher a traité) |
 | `executionResult` | Enum | `success` / `failure` / `partial` / `pending` |
@@ -710,12 +710,12 @@ Un **Job** (ou ordre d'assignation) représente l'intention de provisionner ou r
   │
   ├─► Validation multi-niveaux si requis (cf. §14)
   │
-  ├─► Assignment Service appelle arc-publisher (POST /jobs)
+  ├─► Assignment Service appelle arc-publisher (POST /orders)
   │   Payload: ordre + dates d'effet (now, demain, arrivée, mutation...)
   │
-  ├─► arc-publisher persiste le job en PostgreSQL
+  ├─► arc-publisher persiste l'ordre en PostgreSQL
   │
-  ├─► arc-publisher recalcule périodiquement les jobs pending
+  ├─► arc-publisher recalcule périodiquement les ordres pending
   │   (ex: toutes les secondes)
   │
   ├─► Quand la date d'exécution est atteinte:
@@ -754,10 +754,10 @@ pending → cancelled (annulation possible tant que state ≠ sent)
 #### 11.3.4 Tentative d'annulation après envoi
 
 ```
-sent → job déjà publié dans arc-publisher → tentative de compensation (remove job)
+sent → Ordre déjà publié dans arc-publisher → tentative de compensation (remove order)
 ```
 
-Si arc-collector rapporte que l'opération est exécutée (state = completed), l'annulation n'est plus possible et génère une révocation inverse (remove job).
+Si arc-collector rapporte que l'opération est exécutée (state = completed), l'annulation n'est plus possible et génère une révocation inverse (remove order).
 
 #### 11.3.5 Révocation avec date de fin
 
@@ -767,9 +767,9 @@ active → [at endDate] → revoke order created → sent → completed (remove)
 
 ### 11.4 Publication et consommation
 
-**Intégration Job (système de scheduling)** :
-- `Assignment Service` appelle `arc-publisher` via API `POST /jobs`
-- `arc-publisher` stocke le job en PostgreSQL et gère la temporalité
+**Intégration des ordres (système de scheduling)** :
+- `Assignment Service` appelle `arc-publisher` via API `POST /orders`
+- `arc-publisher` stocke l'ordre en PostgreSQL et gère la temporalité
 - `arc-publisher` publie ensuite dans `arc.provisioning.*` quand l'ordre est exécutable
 - Les agents consomment `arc.provisioning.*` en temps réel
 
@@ -781,15 +781,15 @@ active → [at endDate] → revoke order created → sent → completed (remove)
 ```json
 {
   "specversion": "1.0",
-  "id": "job-uuid-xxx",
+  "id": "order-uuid-xxx",
   "source": "instantaccessprovider/assignment-service",
-  "type": "com.instantaccess.job.created",
+  "type": "com.instantaccess.order.created",
   "time": "2026-05-08T14:30:00.000Z",
   "datacontenttype": "application/json",
   
   "data": {
-    "job": {
-      "jobId": "job-uuid-xxx",
+    "order": {
+      "orderId": "order-uuid-xxx",
       "assignmentId": "assignment-uuid",
       "sourceSystem": "activedirectory",
       "operationType": "add",
@@ -813,13 +813,13 @@ active → [at endDate] → revoke order created → sent → completed (remove)
 ```json
 {
   "specversion": "1.0",
-  "id": "job-result-xxx",
+  "id": "order-result-xxx",
   "source": "arc-publisher",
-  "type": "com.instantaccess.job.completed",
+  "type": "com.instantaccess.order.completed",
   "time": "2026-05-08T15:02:30.000Z",
   
   "data": {
-    "jobId": "job-uuid-xxx",
+    "orderId": "order-uuid-xxx",
     "state": "completed",
     "executionResult": "success",
     "executedAt": "2026-05-08T15:02:25.000Z"
@@ -940,12 +940,12 @@ Un client peut autoriser **plusieurs clés d'identification par personne** (jusq
 
 ### 12.5 Utilisation des clés dans les ordres
 
-Quand un Job est créé pour provisionner un droit :
+Quand un ordre est créé pour provisionner un droit :
 
 1. Récupérer la clé d'identification de l'identité
 2. Appliquer les règles d'appartenance du système cible
 3. Générer le SAM Account Name, UPN, login applicatif, etc.
-4. Inclure dans le payload du Job
+4. Inclure dans le payload de l'ordre
 
 ---
 
@@ -1252,7 +1252,7 @@ Si un rôle actif est modifié (ajout/suppression d'entitlements, changement de 
 | **Drift** | Divergence entre état souhaité (IAM) et état réel (systèmes sources) |
 | **Entitlement** | Droit d'accès concret dans un système source (groupe AD, rôle IAM…) |
 | **Identity** | Abstraction d'une personne/compte/service capable d'avoir des droits |
-| **Job** | Ordre d'assignation à envoyer à arc-provisioning et arc-publisher |
+| **Ordre** | Ordre d'assignation à envoyer à arc-provisioning et arc-publisher |
 | **Rôle** | Ensemble logique de droits (entitlements) affectable à des identities |
 | **Tenant** | Client/organisation avec configuration isolée (multi-tenancy) |
 | **T0** | Image initiale (snapshot) de l'état d'un système à onboarding |

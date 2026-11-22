@@ -31,7 +31,7 @@ sequenceDiagram
     A->>L: recherche des groupes de l'utilisateur
     L-->>A: groupes
     A-->>C: JWT signé RS256 (sub, roles, exp)
-    C->>P: POST /jobs (Authorization: Bearer JWT)
+    C->>P: POST /orders (Authorization: Bearer JWT)
     P->>P: validation signature, exp, iss, aud, rôle
     Note over P,A: la clé publique est obtenue une fois via GET /.well-known/jwks.json
     P-->>C: 202 Accepted
@@ -100,9 +100,9 @@ Les branches de recherche dépendent de l'annuaire (`ou=Users`/`ou=Groups` par d
 
 | Service | Endpoint | Rôle requis |
 |---|---|---|
-| `arc-publisher` | `POST /jobs` | `ARC_PUBLISHER` ou `ARC_ADMIN` |
-| `arc-publisher` | `DELETE /jobs/{id}` | `ARC_PUBLISHER` ou `ARC_ADMIN` |
-| `arc-publisher` | `GET /jobs`, `GET /jobs/{id}` | `ARC_READER`, `ARC_PUBLISHER` ou `ARC_ADMIN` |
+| `arc-publisher` | `POST /orders` | `ARC_PUBLISHER` ou `ARC_ADMIN` |
+| `arc-publisher` | `DELETE /orders/{id}` | `ARC_PUBLISHER` ou `ARC_ADMIN` |
+| `arc-publisher` | `GET /orders`, `GET /orders/{id}` | `ARC_READER`, `ARC_PUBLISHER` ou `ARC_ADMIN` |
 | `product-manager` | `GET /products/**` | `ARC_READER`, `ARC_PUBLISHER` ou `ARC_ADMIN` |
 | `product-manager` | `POST`, `PUT`, `DELETE` sur `/products/**` | `ARC_PUBLISHER` ou `ARC_ADMIN` |
 | les deux | `/actuator/health` | public |
@@ -110,7 +110,7 @@ Les branches de recherche dépendent de l'annuaire (`ou=Users`/`ou=Groups` par d
 
 `product-manager`, qui appelle `arc-publisher`, s'authentifie auprès d'`arc-auth` avec un **compte de service** (variables `ARC_AUTH_USERNAME` et `ARC_AUTH_PASSWORD` ; compte placé par exemple sous `ou=ServiceAccounts` et membre de `arc-publishers`) et transmet le jeton obtenu. Le jeton est conservé jusqu'à 30 secondes avant son expiration puis renouvelé ; si `arc-publisher` le refuse (`401`), un nouveau jeton est demandé et l'appel est retenté une seule fois.
 
-La transmission de `sub` (« qui a demandé ce provisioning ») dans les journaux et les métadonnées du job n'est pas encore implémentée (point ouvert 3).
+La transmission de `sub` (« qui a demandé ce provisioning ») dans les journaux et les métadonnées de l'ordre n'est pas encore implémentée (point ouvert 3).
 
 ## 8. Configuration
 
@@ -160,13 +160,13 @@ TOKEN=$(curl -s -X POST http://localhost:8082/token \
   -d '{"username":"alice","password":"arc-demo-alice"}' | jq -r .access_token)
 
 # 2. Appeler l'API protégée
-curl -X POST http://localhost:8081/jobs \
+curl -X POST http://localhost:8081/orders \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d @job.json
+  -d @order.json
 ```
 
-Sans jeton ou avec un jeton invalide, `arc-publisher` répond `401` ; avec `bob` (lecteur), `GET /jobs` réussit et `POST /jobs` répond `403`.
+Sans jeton ou avec un jeton invalide, `arc-publisher` répond `401` ; avec `bob` (lecteur), `GET /orders` réussit et `POST /orders` répond `403`.
 
 ## 11. Plan de mise en œuvre
 
@@ -183,4 +183,4 @@ Tranchés : l'authentification est toujours imposée (pas de mode désactivé) ;
 
 1. Stockage de la clé de signature en production (secret Kubernetes, coffre) : dépend de l'environnement de déploiement.
 2. Besoin futur d'OIDC (fournisseur d'identité externe) : `arc-auth` pourrait alors être remplacé par un fournisseur du marché sans changer la validation côté services.
-3. Traçabilité : transmettre `sub` du jeton dans les journaux et les métadonnées des jobs.
+3. Traçabilité : transmettre `sub` du jeton dans les journaux et les métadonnées des ordres.

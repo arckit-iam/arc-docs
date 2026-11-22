@@ -46,7 +46,7 @@ Un déploiement = une instance par annuaire cible (`TARGET_SYSTEM=ldap://LDAP01`
 
 ### 3.1 Contrat d'entrée
 
-Identique à `arc-agent-ad` : le record `ProvisioningCommand` (champs `jobId`, `action`, `identityId`, `identityName`, `targetSystem`, `entitlementId`, `entitlementName`, `scope`, `changedAttributes`, `executeAt`, `correlationId`, `type`). L'agent ignore toute commande dont `targetSystem` ne correspond pas à son `TARGET_SYSTEM` (préfixe `ldap://`). Le type de topic détermine l'objet visé.
+Identique à `arc-agent-ad` : le record `ProvisioningCommand` (champs `orderId`, `action`, `identityId`, `identityName`, `targetSystem`, `entitlementId`, `entitlementName`, `scope`, `changedAttributes`, `executeAt`, `correlationId`, `type`). L'agent ignore toute commande dont `targetSystem` ne correspond pas à son `TARGET_SYSTEM` (préfixe `ldap://`). Le type de topic détermine l'objet visé.
 
 ### 3.2 Actions
 
@@ -81,7 +81,7 @@ Les attributs inconnus sont ignorés avec un avertissement (jamais écrits à l'
 Avec `ARC_AGENT_DRY_RUN=true` (défaut recommandé tant que l'annuaire cible n'est pas validé), l'agent journalise l'opération sans l'exécuter, au même format que `arc-agent-ad` :
 
 ```
-[DRY-RUN] jobId=.. action=.. topic=.. identity=.. targetSystem=.. executeAt=..
+[DRY-RUN] orderId=.. action=.. topic=.. identity=.. targetSystem=.. executeAt=..
 ```
 
 ### 3.5 Configuration
@@ -202,7 +202,7 @@ Une écriture faite par l'agent de provisioning est elle-même observée par le 
 
 - **Comparer l'auteur au compte de service ne suffit pas**, constaté sur Apache DS : une notification d'ajout n'a pas de `modifiersName` (seulement `creatorsName`), l'auteur arrive sous forme normalisée (OID et espaces, rendu lisible par le schéma), et pour une suppression l'auteur rapporté est le précédent auteur de l'entrée, pas celui qui supprime ;
 - l'agent tient donc une **mémoire en RAM de ses propres écritures** (`OwnWriteRegistryPort`) : le module d'exécution enregistre le couple (DN, type de changement) avant chaque écriture ; le module de collecte le consomme une seule fois à la notification correspondante et marque alors l'événement `origin=arc-agent`. Durée de vie d'une entrée : `ARC_AGENT_COLLECTION_OWN_WRITE_TTL` (30 s). Limites : la mémoire est locale à un processus d'agent, et une écriture externe sur le même DN et le même type dans cette fenêtre serait marquée à tort `arc-agent` ;
-- l'événement est publié avec `origin=arc-agent` et non supprimé : il reste utile à l'audit et à la confirmation d'exécution d'un job ;
+- l'événement est publié avec `origin=arc-agent` et non supprimé : il reste utile à l'audit et à la confirmation d'exécution d'un ordre ;
 - tout consommateur qui déclencherait un provisioning à partir de `arc.sync.*` doit ignorer les événements `origin=arc-agent` pour éviter une boucle. Le consolidator propage `origin` dans les événements `arc.sync.*`.
 
 ### 4.8 Fiabilité et reprise
@@ -299,11 +299,11 @@ Ajouts réalisés : `apacheds` et `arc-agent-openldap` sont en place (l'agent é
 
 Les images publiées (`:stable`) contiennent la collecte et la consolidation LDAP depuis `arc-agent-openldap` 0.2.0 et `arc-consolidator` 1.2.1 (la 1.2.0 n'a pas été publiée : son build a échoué sur une étape GitOps, retirée depuis) : la démonstration du dépôt parent fonctionne sans image construite localement. Avec des versions antérieures, la collecte n'est pas disponible.
 
-Scénario : `POST /jobs` (`targetSystem` `ldap://LDAP01`) crée un utilisateur, un groupe et une affectation dans Apache DS, vérifiables avec `ldapsearch` ; chaque écriture réapparaît dans `iam.raw.ldap` avec `origin=arc-agent`. Modifier l'entrée `alice` avec `ldapmodify` produit un message `origin=external` dans `iam.raw.ldap`, puis un événement `MODIFIED` dans `arc.sync.identity` en quelques secondes (de même, l'ajout ou le retrait d'un `member` produit une assignation `ADDED` ou `REMOVED` dans `arc.sync.assignment`). Scénario cible : le `POST /jobs` exige alors un jeton.
+Scénario : `POST /orders` (`targetSystem` `ldap://LDAP01`) crée un utilisateur, un groupe et une affectation dans Apache DS, vérifiables avec `ldapsearch` ; chaque écriture réapparaît dans `iam.raw.ldap` avec `origin=arc-agent`. Modifier l'entrée `alice` avec `ldapmodify` produit un message `origin=external` dans `iam.raw.ldap`, puis un événement `MODIFIED` dans `arc.sync.identity` en quelques secondes (de même, l'ajout ou le retrait d'un `member` produit une assignation `ADDED` ou `REMOVED` dans `arc.sync.assignment`). Scénario cible : le `POST /orders` exige alors un jeton.
 
 ## 6. Observabilité
 
-- Journaux structurés par commande (`jobId`, `correlationId`) et par changement collecté (`entryUUID`).
+- Journaux structurés par commande (`orderId`, `correlationId`) et par changement collecté (`entryUUID`).
 - Métriques (Actuator / Micrometer) : commandes exécutées / rejetées, changements collectés, retard de collecte (horodatage du changement – horodatage de publication), état de la connexion LDAP.
 - Sonde de santé : connexion LDAP et connexion Kafka.
 

@@ -8,7 +8,7 @@
 - Gérer les **comptes non utilisateurs** (comptes de service) rattachés à un **produit** : service `product-manager`.
 - Gérer les **identités humaines** et leurs **comptes utilisateurs** : service distinct `identity-manager`.
 - Définir les **types de compte** par la configuration du déploiement, sans modifier le code ni le schéma SQL.
-- Alimenter les comptes de deux façons : **création par l'API ou l'interface** (avec job de provisioning) et **découverte** à partir de l'annuaire collecté.
+- Alimenter les comptes de deux façons : **création par l'API ou l'interface** (avec ordre de provisioning) et **découverte** à partir de l'annuaire collecté.
 
 ## 2. Types de compte
 
@@ -55,11 +55,40 @@ Annuaire --> agent collecteur --> iam.raw.* --> arc-consolidator --> arc.sync.id
                               product-manager                     identity-manager
                        (type NON_USER reconnu par motif)   (type USER reconnu par motif)
 
-Console / API --POST /accounts--> product-manager | identity-manager --POST /jobs--> arc-publisher
+Console / API --POST /accounts--> product-manager | identity-manager --ordre--> arc.orders (Kafka) | POST /orders (API) --> arc-publisher
 ```
 
 - **Découverte** (`ARC_DISCOVERY_ENABLED=true`) : chaque événement de `arc.sync.identity` est comparé aux motifs des types. L'identifiant utilisé est le champ `name` (identifiant technique : `uid` LDAP, `sAMAccountName`), à défaut `displayName` lorsque `name` est un DN. Un compte reconnu est enregistré avec la source `DISCOVERED` ; s'il correspond à un produit ou à une identité existants, il y est corrélé, sinon il reste **non corrélé**. `POST /accounts/correlate` rejoue la corrélation (par exemple après la création du produit).
-- **Création** : `POST /accounts` crée le compte et un job de provisioning auprès d'`arc-publisher` (source `API`).
+- **Création** : `POST /accounts` crée le compte et un ordre de provisioning à destination d'`arc-publisher` (source `API`).
+
+### Ordres, temporalité et annulation
+
+Les managers ne connaissent pas l'annuaire cible : ils émettent des **ordres** métier (`CREATE` / `DELETE`, cible `IDENTITY` ou `ENTITLEMENT`) qui portent le **type de compte** (`accountType`) et, pour un profil, le **périmètre** (`scope`). L'agent associe lui-même chaque type de compte à sa branche d'annuaire (par exemple `standard` → `ou=Tier2`, `admin` → `ou=Tier0`), par sa configuration (`AD_ACCOUNT_TYPE_*_OU`, `ARC_AGENT_LDAP_ACCOUNT_TYPE_*_OU`). Un type que l'agent ne connaît pas est refusé.
+
+**Canal d'émission** (`ARC_ORDERS_CHANNEL`) :
+
+| Valeur | Comportement |
+|---|---|
+| `kafka` (défaut) | Le manager publie sur le topic `ARC_ORDERS_TOPIC` (`arc.orders`), clé = identifiant de l'ordre ; `arc-publisher` le consomme (`ARC_PUBLISHER_MODE=kafka` ou `both`). |
+| `api` | Le manager appelle `POST /orders` (et `DELETE /orders/{id}`) d'`arc-publisher`, avec un jeton de compte de service. |
+
+L'identifiant de l'ordre (UUID) est généré par le manager, ce qui permet de l'annuler quel que soit le canal.
+
+**Temporalité** : un compte ou un profil porte une date de début et une date de fin facultatives (`startDate`, `endDate`, au format `yyyy-MM-dd`, fuseau `ARC_ORDERS_ZONE`, `UTC` par défaut).
+
+- Ordre de création : `executeAt` = début (immédiat si le début est absent ou atteint).
+- Ordre de suppression : `executeAt` = lendemain de la date de fin (le compte reste actif tout le jour de fin).
+- `correlationId` : `account:<id>`, `account:<id>:end`, `account:<id>:delete`, `profile:<produit>:<profil>[:end|:delete]`.
+
+**Annulation d'un ordre futur** (compte ou profil, `product-manager` et `identity-manager`) :
+
+| Action | Effet |
+|---|---|
+| `PUT .../dates` | Remplace les dates ; les ordres en attente sont annulés puis recalculés. |
+| `POST .../cancel-pending` | Annule l'ordre en attente : si la création n'a pas eu lieu, elle est annulée et l'entité supprimée ; sinon la fin programmée est annulée. `409` s'il n'y a rien à annuler. |
+| `DELETE` | Supprimer une entité dont la création est encore en attente annule l'ordre ; si elle est active, un ordre `DELETE` immédiat est émis. |
+
+Routes : `/accounts/{identifiant}/dates`, `/accounts/{identifiant}/cancel-pending`, `/products/{produit}/profiles/{profil}/dates`, `/products/{produit}/profiles/{profil}/cancel-pending`. Côté `arc-publisher`, annuler un ordre déjà exécuté est sans effet (`409` par l'API, ignoré par la file) : l'annulation ne vaut que tant que l'ordre est `PENDING`.
 
 ## 4. Sécurité
 
@@ -70,6 +99,7 @@ Console / API --POST /accounts--> product-manager | identity-manager --POST /job
 - Formulaire de connexion → `POST /token` d'`arc-auth` (relayé par le serveur de la console). Le jeton est conservé dans le `sessionStorage` du navigateur.
 - Le serveur de la console sert l'interface et relaie, sans état et sans CORS, les appels `/api/pm/*` (`product-manager`) et `/api/im/*` (`identity-manager`) en transmettant l'en-tête `Authorization`.
 - Les rôles du jeton ne servent qu'à afficher ou masquer les actions : **les API restent seules juges des droits**.
+- Comptes et profils affichent leur période de validité (début, fin) et leur statut (création planifiée, actif, expiré) ; les dates se modifient et l'ordre en attente s'annule depuis l'interface.
 - En-têtes `Content-Security-Policy` stricts, aucune donnée injectée par `innerHTML`.
 
 ## 6. Abandon d'`arc-gateway` et `arc-gateway-frontend-node`
